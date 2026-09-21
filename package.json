@@ -1,17 +1,21 @@
 {
   "name": "ms4-smoke-brain",
   "version": "1.0.0",
-  "description": "",
+  "description": "Agregador de SmokeCast \u2014 vista preliminar del Hito 1",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node --env-file-if-exists=.env index.js",
+    "dev": "node --env-file-if-exists=.env --watch index.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "axios": "^1.20.0",
-    "express": "^5.2.1"
+    "express": "5.2.1"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }
