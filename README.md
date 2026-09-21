@@ -4,28 +4,31 @@ Agregador Express sin base de datos. Puerto predeterminado: 8084.
 
 ## Ejecución local
 
-Requiere Node.js 22.12 o superior (versión de referencia: 22).
-Desde esta carpeta:
+Requiere Node.js 22.12 o superior:
 
 ```sh
 npm ci
 cp env.example .env
-# Editar .env con la configuración local.
 npm start
 ```
 
-`npm run dev` reinicia al editar archivos. `npm test` ejecuta las pruebas.
-Las dependencias están fijadas en `package-lock.json`.
+MS1, MS2 y MS3 deben estar disponibles antes de consultar el riesgo.
 
-## Endpoints y alcance
+## Endpoints
 
-- `GET /health`: comprueba que esta API responde; no verifica MS1/MS2.
-- `GET /api/risk/preview`: obtiene un incendio desde `/api/v1/fires` de MS1
-  y hasta 20 ciudades a 150 km desde MS2. Devuelve `{fire, nearby_cities, note}`.
+- `GET /health`: confirma que MS4 responde.
+- `GET /health?deep=true`: verifica también MS1, MS2 y MS3; devuelve 503 si alguna dependencia no responde.
+- `GET /api/risk/preview`: toma el primer incendio de MS1, consulta ciudades próximas en MS2 y clima reciente en MS3.
+- `GET /api/risk/preview?fire_id=123`: evalúa un incendio específico.
+- `GET /api/risk/{city_id}`: devuelve el detalle de riesgo de una ciudad del incendio evaluado.
 
-Configurar `MS1_URL`, `MS2_URL` y `REQUEST_TIMEOUT_MS` (5000 por defecto).
-Si no hay incendios, devuelve `fire: null` y una lista vacía con HTTP 200.
-Una dependencia fallida devuelve 502; un timeout devuelve 504.
+La evaluación combina potencia radiativa (FRP), distancia al incendio, población,
+velocidad del viento y alineación de la ciudad con la dirección de desplazamiento de
+la pluma. Produce `risk_score`, `level`, `eta_hours`, `distance_km`, `bearing_deg` y
+`smoke_direction_deg`. La dirección meteorológica se interpreta como dirección de
+origen y se invierte para estimar el desplazamiento del humo.
 
-Se mantiene el alcance del Hito 1: todavía no calcula trayectoria, hora de llegada
-ni puntaje de riesgo, y no consulta MS3. No devuelve alertas simuladas.
+Es un modelo heurístico para el proyecto; no reemplaza una alerta oficial ni un
+modelo físico de dispersión atmosférica.
+
+Configurar `MS1_URL`, `MS2_URL`, `MS3_URL`, `REQUEST_TIMEOUT_MS` y `RISK_RADIUS_KM`.
