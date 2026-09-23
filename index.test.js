@@ -10,11 +10,11 @@ before(async () => {
     if (req.url.startsWith('/api/v1/fires')) {
       return res.end(JSON.stringify({ content: mode === 'empty' ? [] : [{ id: 1, centroidLat: 0, centroidLon: 0 }] }));
     }
-    if (req.url.startsWith('/api/cities/near')) {
+    if (req.url.startsWith('/api/v1/cities/near')) {
       cityCalls++;
       return res.end(JSON.stringify([{ id: 2, name: 'Ciudad cercana', latitude: 0.1, longitude: 0.1, population: 100000, distance_km: 15 }]));
     }
-    if (req.url.startsWith('/api/weather/latest')) {
+    if (req.url.startsWith('/api/v1/weather/latest')) {
       return res.end(JSON.stringify({ city_id: 2, city_name: 'Ciudad cercana', wind_speed_kmh: 12, wind_direction_deg: 45 }));
     }
     if (req.url.startsWith('/health')) return res.end(JSON.stringify({ status: 'ok' }));
@@ -33,22 +33,22 @@ after(async () => {
 });
 test('sin incendios responde 200 y no consulta ciudades', async () => {
   mode = 'empty';
-  const response = await fetch(base + '/api/risk/preview');
+  const response = await fetch(base + '/api/v1/risk/preview');
   assert.equal(response.status, 200);
   const data = await response.json();
   assert.equal(data.fire, null); assert.deepEqual(data.nearby_cities, []); assert.equal(cityCalls, 0);
 });
 test('combina MS1 y MS2 con coordenadas cero', async () => {
   mode = 'data';
-  const response = await fetch(base + '/api/risk/preview');
+  const response = await fetch(base + '/api/v1/risk/preview');
   assert.equal(response.status, 200);
   assert.equal((await response.json()).nearby_cities[0].id, 2);
 });
 test('propaga dependencia caída como 502', async () => {
   mode = 'error';
-  assert.equal((await fetch(base + '/api/risk/preview')).status, 502);
+  assert.equal((await fetch(base + '/api/v1/risk/preview')).status, 502);
 });
 test('limita el tiempo de espera y devuelve 504', async () => {
   mode = 'timeout';
-  assert.equal((await fetch(base + '/api/risk/preview')).status, 504);
+  assert.equal((await fetch(base + '/api/v1/risk/preview')).status, 504);
 });

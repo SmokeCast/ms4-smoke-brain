@@ -1,4 +1,5 @@
 const express = require('express');
+const { spec, html: swaggerHtml } = require('./openapi');
 
 const app = express();
 const ms1 = (process.env.MS1_URL || 'http://127.0.0.1:8081').replace(/\/$/, '');
@@ -8,6 +9,8 @@ const timeout = Number(process.env.REQUEST_TIMEOUT_MS || 5000);
 const radiusKm = Number(process.env.RISK_RADIUS_KM || 150);
 
 app.use(express.json());
+app.get('/openapi.json', (req, res) => res.json(spec));
+app.get('/docs', (req, res) => res.type('html').send(swaggerHtml));
 app.use((req, res, next) => { res.set('Access-Control-Allow-Origin', '*'); next(); });
 
 async function getJson(url) {
@@ -44,7 +47,7 @@ function classifyRisk(score) {
   return 'Bajo';
 }
 
-function evaluateCity(fire, city, weather) {
+function evaluateCity(fire, city, weather, sensitiveSites = []) {
   const fireLat = finite(fire.centroidLat ?? fire.centroid_lat);
   const fireLon = finite(fire.centroidLon ?? fire.centroid_lon);
   const cityLat = finite(city.latitude);
@@ -61,7 +64,11 @@ function evaluateCity(fire, city, weather) {
   const intensity = Math.min(1, Math.max(0, finite(fire.maxFrp ?? fire.max_frp, 0) / 200));
   const windFactor = windSpeed > 1 ? 0.35 + 0.65 * alignment : 0.25;
   const populationFactor = Math.min(1, Math.log10(Math.max(10, finite(city.population, 10))) / 7);
-  const score = Math.round(100 * (0.5 * intensity + 0.25 * proximity + 0.15 * windFactor + 0.1 * populationFactor) * alignment);
+  const siteWeights = { hospital: 1.2, clinic: 1.2, care_home: 1.2, shelter: 1.1, school: 0.9,
+    university: 0.9, airport: 1, bus_terminal: 1, port: 1, power_station: 1, water_plant: 1,
+    fire_station: 0.8, police_station: 0.8, market: 0.8, industrial: 1, reserve: 0.7 };
+  const siteExposure = Math.min(1, sensitiveSites.reduce((total, item) => total + (siteWeights[item.type] || 0.8), 0) / 15);
+  const score = Math.round(100 * (0.45 * intensity + 0.2 * proximity + 0.12 * windFactor + 0.08 * populationFactor + 0.15 * siteExposure) * alignment);
   const eta = windSpeed > 1 ? Math.max(0.1, distance / (windSpeed * 0.8)) : null;
   return {
     ...city,
@@ -69,6 +76,8 @@ function evaluateCity(fire, city, weather) {
     smoke_direction_deg: smokeDirection == null ? null : Number(smokeDirection.toFixed(1)),
     wind_alignment: Number(alignment.toFixed(3)), wind_speed_kmh: windSpeed,
     risk_score: score, level: classifyRisk(score), eta_hours: eta == null ? null : Number(eta.toFixed(1)),
+    sensitive_sites_count: sensitiveSites.length,
+    sensitive_site_types: [...new Set(sensitiveSites.map(item => item.type).filter(Boolean))].sort(),
     weather: weather || null,
   };
 }
@@ -91,14 +100,21 @@ async function calculateRisk(fireId) {
   const fireLat = finite(fire.centroidLat ?? fire.centroid_lat);
   const fireLon = finite(fire.centroidLon ?? fire.centroid_lon);
   if (fireLat == null || fireLon == null) throw new Error('Coordenadas del incendio inválidas');
-  const cities = await getJson(`${ms2}/api/cities/near?lat=${fireLat}&lon=${fireLon}&radius_km=${radiusKm}`);
+  const cities = await getJson(`${ms2}/api/v1/cities/near?lat=${fireLat}&lon=${fireLon}&radius_km=${radiusKm}`);
   if (!Array.isArray(cities)) throw new Error('Respuesta de MS2 inválida');
   const evaluated = await Promise.all(cities.map(async city => {
     try {
-      const weather = await getJson(`${ms3}/api/weather/latest?city_id=${encodeURIComponent(city.id)}`);
-      return evaluateCity(fire, city, weather);
+      const [weather, sensitiveSites] = await Promise.all([
+        getJson(`${ms3}/api/v1/weather/latest?city_id=${encodeURIComponent(city.id)}`),
+        getJson(`${ms2}/api/v1/cities/${encodeURIComponent(city.id)}/sensitive-sites`).catch(() => []),
+      ]);
+      return evaluateCity(fire, city, weather, Array.isArray(sensitiveSites) ? sensitiveSites : []);
     } catch (error) {
-      if (error.message.includes('HTTP 404')) return evaluateCity(fire, city, null);
+      if (error.message.includes('HTTP 404')) {
+        let sensitiveSites = [];
+        try { sensitiveSites = await getJson(`${ms2}/api/v1/cities/${encodeURIComponent(city.id)}/sensitive-sites`); } catch { /* MS2 puede no tener sitios todavía. */ }
+        return evaluateCity(fire, city, null, Array.isArray(sensitiveSites) ? sensitiveSites : []);
+      }
       throw error;
     }
   }));
@@ -116,7 +132,7 @@ app.get('/health', async (req, res) => {
   res.status(healthy ? 200 : 503).json({ status: healthy ? 'ok' : 'degraded', service: 'ms4-smoke-brain', dependencies });
 });
 
-app.get('/api/risk/preview', async (req, res) => {
+app.get('/api/v1/risk/preview', async (req, res) => {
   try { res.json(await calculateRisk(req.query.fire_id)); }
   catch (error) {
     console.error('MS4:', error.message);
@@ -124,10 +140,10 @@ app.get('/api/risk/preview', async (req, res) => {
   }
 });
 
-app.get('/api/risk/:cityId', async (req, res) => {
+app.get('/api/v1/risk/:city_id', async (req, res) => {
   try {
     const result = await calculateRisk(req.query.fire_id);
-    const city = result.alerts.find(item => item.id === Number(req.params.cityId));
+    const city = result.alerts.find(item => item.id === Number(req.params.city_id));
     if (!city) return res.status(404).json({ error: 'No se encontró evaluación para la ciudad' });
     res.json(city);
   } catch (error) {
